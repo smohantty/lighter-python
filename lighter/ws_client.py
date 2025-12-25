@@ -151,15 +151,25 @@ class WsClient:
         raise Exception(f"Closed: {close_status_code} {close_msg}")
 
     def run(self):
-        ws = connect(self.base_url)
-        self.ws = ws
-
-        for message in ws:
-            self.on_message(ws, message)
+        import time
+        while True:
+            try:
+                ws = connect(self.base_url)
+                self.ws = ws
+                for message in ws:
+                    self.on_message(ws, message)
+            except Exception as e:
+                print(f"WS Connection failed/closed: {e}. Reconnecting in 5s...")
+                time.sleep(5)
 
     async def run_async(self):
-        ws = await connect_async(self.base_url)
-        self.ws = ws
-
-        async for message in ws:
-            await self.on_message_async(ws, message)
+        import asyncio
+        while True:
+            try:
+                ws = await connect_async(self.base_url)
+                self.ws = ws
+                async for message in ws:
+                    await self.on_message_async(ws, message)
+            except Exception as e:
+                print(f"WS Connection failed/closed: {e}. Reconnecting in 5s...")
+                await asyncio.sleep(5)
