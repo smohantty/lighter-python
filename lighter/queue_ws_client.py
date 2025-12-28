@@ -26,6 +26,7 @@ class QueueWsClient:
             raise Exception("No subscriptions provided.")
 
         self.order_book_states = {}
+        self.mid_prices = {}
         self.account_states = {}
 
         self.queue = queue
@@ -93,14 +94,48 @@ class QueueWsClient:
     def handle_subscribed_order_book(self, message):
         market_id = message["channel"].split(":")[1]
         self.order_book_states[market_id] = message["order_book"]
-        if self.queue:
-            self.queue.put_nowait(("order_book", market_id, self.order_book_states[market_id]))
+        
+        mid_price = self.calculate_mid_price(market_id)
+        # Only queue if price is valid (> 0)
+        if mid_price > 0:
+            self.mid_prices[market_id] = mid_price
+            if self.queue:
+                self.queue.put_nowait(("mid_price", market_id, mid_price))
 
     def handle_update_order_book(self, message):
         market_id = message["channel"].split(":")[1]
         self.update_order_book_state(market_id, message["order_book"])
-        if self.queue:
-            self.queue.put_nowait(("order_book", market_id, self.order_book_states[market_id]))
+        
+        new_mid_price = self.calculate_mid_price(market_id)
+        # Only queue if price is valid (> 0) and has changed
+        if new_mid_price > 0 and new_mid_price != self.mid_prices.get(market_id):
+            self.mid_prices[market_id] = new_mid_price
+            if self.queue:
+                self.queue.put_nowait(("mid_price", market_id, new_mid_price))
+
+    def calculate_mid_price(self, market_id):
+        order_book = self.order_book_states.get(market_id)
+        if not order_book:
+            return 0.0
+
+        bids = order_book.get("bids", [])
+        asks = order_book.get("asks", [])
+
+        best_bid = 0.0
+        if bids:
+            best_bid = max(float(bid["price"]) for bid in bids)
+        
+        best_ask = 0.0
+        if asks:
+            best_ask = min(float(ask["price"]) for ask in asks)
+
+        if best_bid > 0 and best_ask > 0:
+            return (best_bid + best_ask) / 2.0
+        elif best_bid > 0:
+            return best_bid
+        elif best_ask > 0:
+            return best_ask
+        return 0.0
 
     def update_order_book_state(self, market_id, order_book):
         self.update_orders(
