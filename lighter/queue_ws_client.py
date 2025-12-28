@@ -32,6 +32,7 @@ class QueueWsClient:
         self.queue = queue
 
         self.ws = None
+        self._should_stop = False
 
     def on_message(self, ws, message):
         if isinstance(message, str):
@@ -183,26 +184,56 @@ class QueueWsClient:
     def on_close(self, ws, close_status_code, close_msg):
         raise Exception(f"Closed: {close_status_code} {close_msg}")
 
+    def stop(self):
+        self._should_stop = True
+        if self.ws:
+            # For sync ws, we might be blocked on iteration. 
+            # Closing the socket will break the loop.
+            try:
+                self.ws.close()
+            except:
+                pass
+
     def run(self):
         import time
-        while True:
+        while not self._should_stop:
             try:
                 ws = connect(self.base_url)
                 self.ws = ws
                 for message in ws:
+                    if self._should_stop:
+                        break
                     self.on_message(ws, message)
             except Exception as e:
+                if self._should_stop:
+                    break
                 print(f"WS Connection failed/closed: {e}. Reconnecting in 5s...")
                 time.sleep(5)
+        
+        if self.ws:
+            try:
+                self.ws.close()
+            except:
+                pass
 
     async def run_async(self):
         import asyncio
-        while True:
+        while not self._should_stop:
             try:
                 ws = await connect_async(self.base_url)
                 self.ws = ws
                 async for message in ws:
+                    if self._should_stop:
+                        break
                     await self.on_message_async(ws, message)
             except Exception as e:
+                if self._should_stop:
+                    break
                 print(f"WS Connection failed/closed: {e}. Reconnecting in 5s...")
                 await asyncio.sleep(5)
+        
+        if self.ws:
+            try:
+                await self.ws.close()
+            except:
+                pass
