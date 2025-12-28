@@ -1,5 +1,4 @@
 import json
-from websockets.sync.client import connect
 from websockets.client import connect as connect_async
 from lighter.configuration import Configuration
 
@@ -32,16 +31,16 @@ class QueueWsClient:
         self.queue = queue
 
         self.ws = None
-        self._should_stop = False
+        self._stop_event = None
 
-    def on_message(self, ws, message):
+    async def on_message_async(self, ws, message):
         if isinstance(message, str):
             message = json.loads(message)
 
         message_type = message.get("type")
 
         if message_type == "connected":
-            self.handle_connected(ws)
+            await self.handle_connected_async(ws)
         elif message_type == "subscribed/order_book":
             self.handle_subscribed_order_book(message)
         elif message_type == "update/order_book":
@@ -52,33 +51,10 @@ class QueueWsClient:
             self.handle_update_account(message)
         elif message_type == "ping":
             # Respond to ping with pong
-            ws.send(json.dumps({"type": "pong"}))
+            await ws.send(json.dumps({"type": "pong"}))
         else:
             self.handle_unhandled_message(message)
 
-    async def on_message_async(self, ws, message):
-        message = json.loads(message)
-        message_type = message.get("type")
-
-        if message_type == "connected":
-            await self.handle_connected_async(ws)
-        elif message_type == "ping":
-            # Respond to ping with pong
-            await ws.send(json.dumps({"type": "pong"}))
-        else:
-            self.on_message(ws, message)
-
-    def handle_connected(self, ws):
-        for market_id in self.subscriptions["order_books"]:
-            ws.send(
-                json.dumps({"type": "subscribe", "channel": f"order_book/{market_id}"})
-            )
-        for account_id in self.subscriptions["accounts"]:
-            ws.send(
-                json.dumps(
-                    {"type": "subscribe", "channel": f"account_all/{account_id}"}
-                )
-            )
 
     async def handle_connected_async(self, ws):
         for market_id in self.subscriptions["order_books"]:
@@ -185,52 +161,39 @@ class QueueWsClient:
         raise Exception(f"Closed: {close_status_code} {close_msg}")
 
     def stop(self):
-        self._should_stop = True
+        if self._stop_event:
+            self._stop_event.set()
         if self.ws:
-            # For sync ws, we might be blocked on iteration. 
-            # Closing the socket will break the loop.
+            # We use loop.create_task if we are in an async loop
+            # and the ws is an async client.
             try:
-                self.ws.close()
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self.ws.close())
             except:
-                pass
-
-    def run(self):
-        import time
-        while not self._should_stop:
-            try:
-                ws = connect(self.base_url)
-                self.ws = ws
-                for message in ws:
-                    if self._should_stop:
-                        break
-                    self.on_message(ws, message)
-            except Exception as e:
-                if self._should_stop:
-                    break
-                print(f"WS Connection failed/closed: {e}. Reconnecting in 5s...")
-                time.sleep(5)
-        
-        if self.ws:
-            try:
-                self.ws.close()
-            except:
+                # Fallback if no loop is running or other issues
                 pass
 
     async def run_async(self):
         import asyncio
-        while not self._should_stop:
+        self._stop_event = asyncio.Event()
+        while not self._stop_event.is_set():
             try:
                 ws = await connect_async(self.base_url)
                 self.ws = ws
                 async for message in ws:
-                    if self._should_stop:
+                    if self._stop_event.is_set():
                         break
                     await self.on_message_async(ws, message)
             except Exception as e:
-                if self._should_stop:
+                if self._stop_event.is_set():
                     break
                 print(f"WS Connection failed/closed: {e}. Reconnecting in 5s...")
-                await asyncio.sleep(5)
+                try:
+                    await asyncio.sleep(5)
+                except asyncio.CancelledError:
+                    break
         
         if self.ws:
             try:
