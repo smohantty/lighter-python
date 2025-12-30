@@ -170,25 +170,25 @@ class QueueWsClient:
         """Handle initial orders snapshot from account_all_orders channel"""
         account_id = message["channel"].split(":")[1]
         if self.queue:
-            self.queue.put_nowait(("orders", account_id, message))
+            self.queue.put_nowait(("open_orders", account_id, message))
     
     def handle_update_account_all_orders(self, message):
         """Handle order updates from account_all_orders channel"""
         account_id = message["channel"].split(":")[1]
         if self.queue:
-            self.queue.put_nowait(("orders", account_id, message))
+            self.queue.put_nowait(("open_orders", account_id, message))
     
     def handle_subscribed_account_all_trades(self, message):
         """Handle initial trades snapshot from account_all_trades channel"""
         account_id = message["channel"].split(":")[1]
         if self.queue:
-            self.queue.put_nowait(("trades", account_id, message))
+            self.queue.put_nowait(("user_fills", account_id, message))
     
     def handle_update_account_all_trades(self, message):
         """Handle trade updates from account_all_trades channel"""
         account_id = message["channel"].split(":")[1]
         if self.queue:
-            self.queue.put_nowait(("trades", account_id, message))
+            self.queue.put_nowait(("user_fills", account_id, message))
 
     def handle_unhandled_message(self, message):
         raise Exception(f"Unhandled message: {message}")
