@@ -19,7 +19,8 @@ class QueueWsClient:
 
         self.subscriptions = {
             "order_books": order_book_ids,
-            "accounts": account_ids,
+            "account_all_orders": account_ids,
+            "account_all_trades": account_ids,
         }
 
         if len(order_book_ids) == 0 and len(account_ids) == 0:
@@ -51,10 +52,6 @@ class QueueWsClient:
             self.handle_subscribed_order_book(message)
         elif message_type == "update/order_book":
             self.handle_update_order_book(message)
-        elif message_type == "subscribed/account_all":
-            self.handle_subscribed_account(message)
-        elif message_type == "update/account_all":
-            self.handle_update_account(message)
         elif message_type == "subscribed/account_all_orders":
             self.handle_subscribed_account_all_orders(message)
         elif message_type == "update/account_all_orders":
@@ -76,17 +73,8 @@ class QueueWsClient:
                 json.dumps({"type": "subscribe", "channel": f"order_book/{market_id}"})
             )
         
-        for account_id in self.subscriptions["accounts"]:
-            # Subscribe to basic account_all channel
-            await ws.send(
-                json.dumps(
-                    {"type": "subscribe", "channel": f"account_all/{account_id}"}
-                )
-            )
-            
-            # Subscribe to authenticated channels if auth token is available
-            if self.auth_token:
-                # Subscribe to account_all_orders for order data
+        if self.auth_token:
+            for account_id in self.subscriptions["account_all_orders"]:
                 await ws.send(
                     json.dumps({
                         "type": "subscribe",
@@ -94,8 +82,8 @@ class QueueWsClient:
                         "auth": self.auth_token
                     })
                 )
-                
-                # Subscribe to account_all_trades for fill/trade data
+
+            for account_id in self.subscriptions["account_all_trades"]:
                 await ws.send(
                     json.dumps({
                         "type": "subscribe",
@@ -177,17 +165,6 @@ class QueueWsClient:
             order for order in existing_orders if float(order["size"]) > 0
         ]
 
-    def handle_subscribed_account(self, message):
-        account_id = message["channel"].split(":")[1]
-        self.account_states[account_id] = message
-        if self.queue:
-            self.queue.put_nowait(("account", account_id, self.account_states[account_id]))
-
-    def handle_update_account(self, message):
-        account_id = message["channel"].split(":")[1]
-        self.account_states[account_id] = message
-        if self.queue:
-            self.queue.put_nowait(("account", account_id, self.account_states[account_id]))
     
     def handle_subscribed_account_all_orders(self, message):
         """Handle initial orders snapshot from account_all_orders channel"""
