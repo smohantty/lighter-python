@@ -1,5 +1,8 @@
 import json
 from websockets.client import connect as connect_async
+import logging
+
+logger = logging.getLogger(__name__)
 from lighter.configuration import Configuration
 
 class QueueWsClient:
@@ -16,6 +19,7 @@ class QueueWsClient:
             host = Configuration.get_default().host.replace("https://", "")
 
         self.base_url = f"wss://{host}{path}"
+        logger.info(f"QueueWsClient initialized with URL: {self.base_url}")
 
         self.subscriptions = {
             "order_books": order_book_ids,
@@ -36,9 +40,30 @@ class QueueWsClient:
         self.ws = None
         self._stop_event = None
     
-    def update_auth_token(self, new_token):
+    async def update_auth_token(self, new_token):
         """Update the auth token. Called periodically by Engine."""
+        logger.info(f"Updating auth token. New token (truncated): {new_token[:10]}...")
         self.auth_token = new_token
+        
+        # Resubscribe to authenticated channels with new token if connected
+        if self.ws:
+            for account_id in self.subscriptions["account_all_orders"]:
+                await self.ws.send(
+                    json.dumps({
+                        "type": "subscribe",
+                        "channel": f"account_all_orders/{account_id}",
+                        "auth": self.auth_token
+                    })
+                )
+
+            for account_id in self.subscriptions["account_all_trades"]:
+                await self.ws.send(
+                    json.dumps({
+                        "type": "subscribe",
+                        "channel": f"account_all_trades/{account_id}",
+                        "auth": self.auth_token
+                    })
+                )
 
     async def on_message_async(self, ws, message):
         if isinstance(message, str):
@@ -68,6 +93,7 @@ class QueueWsClient:
 
 
     async def handle_connected_async(self, ws):
+        logger.info("WebSocket connected/reconnected.")
         for market_id in self.subscriptions["order_books"]:
             await ws.send(
                 json.dumps({"type": "subscribe", "channel": f"order_book/{market_id}"})
@@ -228,7 +254,7 @@ class QueueWsClient:
             except Exception as e:
                 if self._stop_event.is_set():
                     break
-                print(f"WS Connection failed/closed: {e}. Reconnecting in 5s...")
+                logger.error(f"WS Connection failed/closed: {e}. Reconnecting in 5s...")
                 try:
                     await asyncio.sleep(5)
                 except asyncio.CancelledError:
