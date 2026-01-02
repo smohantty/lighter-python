@@ -71,26 +71,28 @@ class QueueWsClient:
 
         message_type = message.get("type")
 
-        if message_type == "connected":
-            await self.handle_connected_async(ws)
-        elif message_type == "subscribed/order_book":
-            self.handle_subscribed_order_book(message)
-        elif message_type == "update/order_book":
-            self.handle_update_order_book(message)
-        elif message_type == "subscribed/account_all_orders":
-            self.handle_subscribed_account_all_orders(message)
-        elif message_type == "update/account_all_orders":
-            self.handle_update_account_all_orders(message)
-        elif message_type == "subscribed/account_all_trades":
-            self.handle_subscribed_account_all_trades(message)
-        elif message_type == "update/account_all_trades":
-            self.handle_update_account_all_trades(message)
-        elif message_type == "ping":
-            # Respond to ping with pong
-            await ws.send(json.dumps({"type": "pong"}))
-        else:
-            self.handle_unhandled_message(message)
-
+        try:
+            if message_type == "connected":
+                await self.handle_connected_async(ws)
+            elif message_type == "subscribed/order_book":
+                await self.handle_subscribed_order_book(message)
+            elif message_type == "update/order_book":
+                await self.handle_update_order_book(message)
+            elif message_type == "subscribed/account_all_orders":
+                await self.handle_subscribed_account_all_orders(message)
+            elif message_type == "update/account_all_orders":
+                await self.handle_update_account_all_orders(message)
+            elif message_type == "subscribed/account_all_trades":
+                await self.handle_subscribed_account_all_trades(message)
+            elif message_type == "update/account_all_trades":
+                await self.handle_update_account_all_trades(message)
+            elif message_type == "ping":
+                # Respond to ping with pong
+                await ws.send(json.dumps({"type": "pong"}))
+            else:
+                self.handle_unhandled_message(message)
+        except Exception as e:
+            logger.error(f"Error processing message type '{message_type}': {e}. Message: {message}")
 
     async def handle_connected_async(self, ws):
         logger.info("WebSocket connected/reconnected.")
@@ -118,8 +120,19 @@ class QueueWsClient:
                     })
                 )
 
-    def handle_subscribed_order_book(self, message):
-        market_id = message["channel"].split(":")[1]
+    def _get_channel_id(self, channel, separator=":"):
+        parts = channel.split(separator)
+        if len(parts) > 1:
+            return parts[1]
+        raise ValueError(f"Invalid channel format: {channel}")
+
+    async def handle_subscribed_order_book(self, message):
+        try:
+            market_id = self._get_channel_id(message["channel"])
+        except ValueError as e:
+            logger.warning(f"Ignoring message with invalid channel: {e}")
+            return
+
         self.order_book_states[market_id] = message["order_book"]
         
         mid_price = self.calculate_mid_price(market_id)
@@ -127,10 +140,20 @@ class QueueWsClient:
         if mid_price > 0:
             self.mid_prices[market_id] = mid_price
             if self.queue:
-                self.queue.put_nowait(("mid_price", market_id, mid_price))
+                await self.queue.put(("mid_price", market_id, mid_price))
 
-    def handle_update_order_book(self, message):
-        market_id = message["channel"].split(":")[1]
+    async def handle_update_order_book(self, message):
+        try:
+            market_id = self._get_channel_id(message["channel"])
+        except ValueError as e:
+            logger.warning(f"Ignoring message with invalid channel: {e}")
+            return
+
+        # Check if we have state for this market
+        if market_id not in self.order_book_states:
+             logger.warning(f"Received update for unknown market {market_id}. Ignoring.")
+             return
+
         self.update_order_book_state(market_id, message["order_book"])
         
         new_mid_price = self.calculate_mid_price(market_id)
@@ -140,7 +163,7 @@ class QueueWsClient:
         if new_mid_price > 0 and new_mid_price != old_mid_price:
             self.mid_prices[market_id] = new_mid_price
             if self.queue:
-                self.queue.put_nowait(("mid_price", market_id, new_mid_price))
+                await self.queue.put(("mid_price", market_id, new_mid_price))
 
     def calculate_mid_price(self, market_id):
         order_book = self.order_book_states.get(market_id)
@@ -192,29 +215,49 @@ class QueueWsClient:
         ]
 
     
-    def handle_subscribed_account_all_orders(self, message):
+    async def handle_subscribed_account_all_orders(self, message):
         """Handle initial orders snapshot from account_all_orders channel"""
-        account_id = message["channel"].split(":")[1]
+        try:
+            account_id = self._get_channel_id(message["channel"])
+        except ValueError as e:
+             logger.warning(f"Ignoring message with invalid channel: {e}")
+             return
+
         if self.queue:
-            self.queue.put_nowait(("open_orders", account_id, message))
+            await self.queue.put(("open_orders", account_id, message))
     
-    def handle_update_account_all_orders(self, message):
+    async def handle_update_account_all_orders(self, message):
         """Handle order updates from account_all_orders channel"""
-        account_id = message["channel"].split(":")[1]
+        try:
+            account_id = self._get_channel_id(message["channel"])
+        except ValueError as e:
+             logger.warning(f"Ignoring message with invalid channel: {e}")
+             return
+
         if self.queue:
-            self.queue.put_nowait(("open_orders", account_id, message))
+            await self.queue.put(("open_orders", account_id, message))
     
-    def handle_subscribed_account_all_trades(self, message):
+    async def handle_subscribed_account_all_trades(self, message):
         """Handle initial trades snapshot from account_all_trades channel"""
-        account_id = message["channel"].split(":")[1]
+        try:
+            account_id = self._get_channel_id(message["channel"])
+        except ValueError as e:
+             logger.warning(f"Ignoring message with invalid channel: {e}")
+             return
+
         if self.queue:
-            self.queue.put_nowait(("user_fills", account_id, message))
+            await self.queue.put(("user_fills", account_id, message))
     
-    def handle_update_account_all_trades(self, message):
+    async def handle_update_account_all_trades(self, message):
         """Handle trade updates from account_all_trades channel"""
-        account_id = message["channel"].split(":")[1]
+        try:
+            account_id = self._get_channel_id(message["channel"])
+        except ValueError as e:
+             logger.warning(f"Ignoring message with invalid channel: {e}")
+             return
+
         if self.queue:
-            self.queue.put_nowait(("user_fills", account_id, message))
+            await self.queue.put(("user_fills", account_id, message))
 
     def handle_unhandled_message(self, message):
         raise Exception(f"Unhandled message: {message}")
