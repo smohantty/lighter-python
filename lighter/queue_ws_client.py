@@ -74,6 +74,38 @@ class QueueWsClient:
         if isinstance(message, str):
             message = json.loads(message)
 
+        if "error" in message and isinstance(message["error"], dict):
+            code = message["error"].get("code")
+            if code == 20013:  # invalid auth: expired token
+                logger.warning(f"Received auth expiry error: {message['error']}. Refreshing token...")
+                if self.token_provider:
+                    try:
+                        new_token = await self.token_provider()
+                        if new_token:
+                            self.auth_token = new_token
+                            logger.info("Auth token refreshed after expiry error. Resubscribing...")
+                            # Resubscribe
+                            if self.ws: # Ensure ws is still valid
+                                for account_id in self.subscriptions["account_all_orders"]:
+                                    await self.ws.send(json.dumps({
+                                        "type": "subscribe",
+                                        "channel": f"account_all_orders/{account_id}",
+                                        "auth": self.auth_token
+                                    }))
+                                for account_id in self.subscriptions["account_all_trades"]:
+                                    await self.ws.send(json.dumps({
+                                        "type": "subscribe",
+                                        "channel": f"account_all_trades/{account_id}",
+                                        "auth": self.auth_token
+                                    }))
+                            return # Handled
+                    except Exception as e:
+                        logger.error(f"Failed to refresh token after expiry error: {e}")
+            
+            # Log other errors
+            if code != 30003: # Ignore "Already Subscribed"
+                 logger.error(f"WebSocket Error Message: {message.get('error')}")
+
         message_type = message.get("type")
 
         try:
