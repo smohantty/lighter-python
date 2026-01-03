@@ -14,6 +14,7 @@ class QueueWsClient:
         account_ids=[],
         queue=None,
         auth_token=None,
+        **kwargs
     ):
         if host is None:
             host = Configuration.get_default().host.replace("https://", "")
@@ -36,6 +37,10 @@ class QueueWsClient:
 
         self.queue = queue
         self.auth_token = auth_token
+        self.token_provider = None
+
+        if "token_provider" in kwargs:
+             self.token_provider = kwargs["token_provider"]
 
         self.ws = None
         self._stop_event = None
@@ -101,6 +106,18 @@ class QueueWsClient:
                 json.dumps({"type": "subscribe", "channel": f"order_book/{market_id}"})
             )
         
+        if self.token_provider:
+             logger.info("Refreshing auth token via provider...")
+             try:
+                 new_token = await self.token_provider()
+                 if new_token:
+                     self.auth_token = new_token
+                     logger.info("Auth token refreshed.")
+                 else:
+                     logger.warning("Token provider returned None")
+             except Exception as e:
+                 logger.error(f"Failed to refresh auth token: {e}")
+
         if self.auth_token:
             for account_id in self.subscriptions["account_all_orders"]:
                 await ws.send(
