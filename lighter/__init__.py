@@ -182,3 +182,4 @@ from lighter.models.withdraw_history_item import WithdrawHistoryItem
 from lighter.models.zk_lighter_info import ZkLighterInfo
 from lighter.ws_client import WsClient
 from lighter.signer_client import SignerClient, create_api_key
+from lighter.queue_ws_client import QueueWsClient
